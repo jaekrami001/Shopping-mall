@@ -214,7 +214,7 @@ async def search_products(search_request: SearchRequest):
             {"name": {"$regex": query, "$options": "i"}},
             {"description": {"$regex": query, "$options": "i"}},
             {"brand": {"$regex": query, "$options": "i"}},
-            {"tags": {"$in": [{"$regex": query, "$options": "i"}]}}
+            {"tags": {"$regex": query, "$options": "i"}}
         ]
         
         filter_query["$or"] = text_conditions
