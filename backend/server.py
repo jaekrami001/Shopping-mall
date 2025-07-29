@@ -1,4 +1,5 @@
-from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, Form, Depends
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -8,23 +9,91 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import base64
 import json
+from jose import JWTError, jwt
+from passlib.context import CryptContext
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+# Security
+SECRET_KEY = os.environ.get("SECRET_KEY", "a_secret_key")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token")
+
+# User Model
+class User(BaseModel):
+    username: str
+    hashed_password: str
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
+async def get_user(username: str):
+    user = await db.users.find_one({"username": username})
+    if user:
+        return User(**user)
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    user = await get_user(username)
+    if user is None:
+        raise credentials_exception
+    return user
+
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
 # Create the main app without a prefix
 app = FastAPI()
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"message": exc.detail},
+    )
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    return JSONResponse(
+        status_code=400,
+        content={"message": str(exc)},
+    )
 
 # Product Models
 class Product(BaseModel):
@@ -41,6 +110,8 @@ class Product(BaseModel):
     in_stock: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+from pydantic import validator
+
 class ProductCreate(BaseModel):
     name: str
     description: str
@@ -51,6 +122,12 @@ class ProductCreate(BaseModel):
     image_url: str
     image_base64: Optional[str] = None
     tags: List[str] = []
+
+    @validator('price')
+    def price_must_be_positive(cls, v):
+        if v <= 0:
+            raise ValueError('price must be positive')
+        return v
 
 class SearchRequest(BaseModel):
     query: str
@@ -146,12 +223,29 @@ SAMPLE_PRODUCTS = [
     }
 ]
 
-# Initialize database with sample products
+# Token endpoint
+@api_router.post("/token")
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = await get_user(form_data.username)
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# Initialize database with sample products and a default user
 @api_router.post("/init-products")
 async def init_sample_products():
     try:
-        # Clear existing products
+        # Clear existing products and users
         await db.products.delete_many({})
+        await db.users.delete_many({})
         
         # Insert sample products
         products = []
@@ -160,7 +254,12 @@ async def init_sample_products():
             products.append(product.dict())
         
         result = await db.products.insert_many(products)
-        return {"message": f"Initialized {len(result.inserted_ids)} sample products"}
+
+        # Insert a default user
+        hashed_password = pwd_context.hash("password")
+        await db.users.insert_one({"username": "user", "hashed_password": hashed_password})
+
+        return {"message": f"Initialized {len(result.inserted_ids)} sample products and 1 user"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -194,7 +293,7 @@ async def get_product(product_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/products", response_model=Product)
-async def create_product(product: ProductCreate):
+async def create_product(product: ProductCreate, current_user: User = Depends(get_current_user)):
     try:
         product_obj = Product(**product.dict())
         await db.products.insert_one(product_obj.dict())
@@ -214,7 +313,9 @@ async def search_products(search_request: SearchRequest):
             {"name": {"$regex": query, "$options": "i"}},
             {"description": {"$regex": query, "$options": "i"}},
             {"brand": {"$regex": query, "$options": "i"}},
-            {"tags": {"$regex": query, "$options": "i"}}
+            {"tags": {"$regex": query, "$options": "i"}},
+            {"category": {"$regex": query, "$options": "i"}},
+            {"subcategory": {"$regex": query, "$options": "i"}}
         ]
         
         filter_query["$or"] = text_conditions

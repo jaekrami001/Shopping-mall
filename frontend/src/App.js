@@ -156,12 +156,81 @@ const CategoryFilter = ({ categories, selectedCategory, onCategoryChange }) => {
   );
 };
 
+const LoginForm = ({ onLogin, onClose }) => {
+  const [username, setUsername] = useState("user");
+  const [password, setPassword] = useState("password");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onLogin(username, password);
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content">
+        <button onClick={onClose} className="close-btn">&times;</button>
+        <h2>Login</h2>
+        <form onSubmit={handleSubmit}>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="Username"
+            required
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Password"
+            required
+          />
+          <button type="submit">Login</button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+const CreateProductForm = ({ onCreate }) => {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [price, setPrice] = useState("");
+  const [category, setCategory] = useState("");
+  const [subcategory, setSubcategory] = useState("");
+  const [brand, setBrand] = useState("");
+  const [image_url, setImageUrl] = useState("");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onCreate({ name, description, price: parseFloat(price), category, subcategory, brand, image_url });
+  };
+
+  return (
+    <div className="create-product-form">
+      <h2>Create New Product</h2>
+      <form onSubmit={handleSubmit}>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required />
+        <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" required />
+        <input type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="Price" required />
+        <input type="text" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Category" required />
+        <input type="text" value={subcategory} onChange={(e) => setSubcategory(e.target.value)} placeholder="Subcategory" required />
+        <input type="text" value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Brand" required />
+        <input type="text" value={image_url} onChange={(e) => setImageUrl(e.target.value)} placeholder="Image URL" required />
+        <button type="submit">Create Product</button>
+      </form>
+    </div>
+  );
+};
+
 function App() {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("");
   const [searchResults, setSearchResults] = useState(null);
+  const [token, setToken] = useState(localStorage.getItem("token"));
+  const [showLogin, setShowLogin] = useState(false);
 
   useEffect(() => {
     initializeApp();
@@ -184,6 +253,40 @@ function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleCreateProduct = async (productData) => {
+    try {
+      setLoading(true);
+      await axios.post(`${API}/products`, productData, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await fetchProducts(selectedCategory);
+    } catch (error) {
+      console.error("Error creating product:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = async (username, password) => {
+    try {
+      const response = await axios.post(`${API}/token`, new URLSearchParams({
+        username,
+        password,
+      }));
+      const { access_token } = response.data;
+      localStorage.setItem("token", access_token);
+      setToken(access_token);
+      setShowLogin(false);
+    } catch (error) {
+      console.error("Error logging in:", error);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    setToken(null);
   };
 
   const fetchProducts = async (category = "") => {
@@ -244,10 +347,20 @@ function App() {
         <div className="container">
           <h1 className="app-title">AI Shopping Mall</h1>
           <p className="app-subtitle">Find products with AI-powered search</p>
+          <div className="auth-buttons">
+            {token ? (
+              <button onClick={handleLogout} className="auth-btn">Logout</button>
+            ) : (
+              <button onClick={() => setShowLogin(true)} className="auth-btn">Login</button>
+            )}
+          </div>
         </div>
       </header>
 
+      {showLogin && <LoginForm onLogin={handleLogin} onClose={() => setShowLogin(false)} />}
+
       <main className="main-content">
+        {token && <CreateProductForm onCreate={handleCreateProduct} />}
         <div className="container">
           <SearchBar 
             onSearch={handleSearch}
