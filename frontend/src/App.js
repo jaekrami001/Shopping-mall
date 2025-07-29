@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from "react";
+import { BrowserRouter as Router, Route, Switch, Link } from 'react-router-dom';
 import "./App.css";
 import axios from "axios";
+import Profile from './Profile';
+import Cart from './Cart';
+import Chat from './Chat';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -107,7 +111,7 @@ const SearchBar = ({ onSearch, onImageSearch }) => {
   );
 };
 
-const ProductCard = ({ product }) => {
+const ProductCard = ({ product, onAddToCart }) => {
   return (
     <div className="product-card">
       <div className="product-image">
@@ -125,7 +129,7 @@ const ProductCard = ({ product }) => {
             </span>
           ))}
         </div>
-        <button className="add-to-cart-btn">Add to Cart</button>
+        <button className="add-to-cart-btn" onClick={() => onAddToCart(product)}>Add to Cart</button>
       </div>
     </div>
   );
@@ -156,12 +160,82 @@ const CategoryFilter = ({ categories, selectedCategory, onCategoryChange }) => {
   );
 };
 
+const LoginForm = ({ onLogin, onClose }) => {
+  const [username, setUsername] = useState("user");
+  const [password, setPassword] = useState("password");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onLogin(username, password);
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content">
+        <button onClick={onClose} className="close-btn">&times;</button>
+        <h2>Login</h2>
+        <form onSubmit={handleSubmit}>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="Username"
+            required
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Password"
+            required
+          />
+          <button type="submit">Login</button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+const CreateProductForm = ({ onCreate }) => {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [price, setPrice] = useState("");
+  const [category, setCategory] = useState("");
+  const [subcategory, setSubcategory] = useState("");
+  const [brand, setBrand] = useState("");
+  const [image_url, setImageUrl] = useState("");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onCreate({ name, description, price: parseFloat(price), category, subcategory, brand, image_url });
+  };
+
+  return (
+    <div className="create-product-form">
+      <h2>Create New Product</h2>
+      <form onSubmit={handleSubmit}>
+        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required />
+        <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" required />
+        <input type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="Price" required />
+        <input type="text" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Category" required />
+        <input type="text" value={subcategory} onChange={(e) => setSubcategory(e.target.value)} placeholder="Subcategory" required />
+        <input type="text" value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Brand" required />
+        <input type="text" value={image_url} onChange={(e) => setImageUrl(e.target.value)} placeholder="Image URL" required />
+        <button type="submit">Create Product</button>
+      </form>
+    </div>
+  );
+};
+
 function App() {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("");
   const [searchResults, setSearchResults] = useState(null);
+  const [token, setToken] = useState(localStorage.getItem("token"));
+  const [showLogin, setShowLogin] = useState(false);
+  const [cart, setCart] = useState([]);
 
   useEffect(() => {
     initializeApp();
@@ -184,6 +258,48 @@ function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleCreateProduct = async (productData) => {
+    try {
+      setLoading(true);
+      await axios.post(`${API}/products`, productData, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await fetchProducts(selectedCategory);
+    } catch (error) {
+      console.error("Error creating product:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = async (username, password) => {
+    try {
+      const response = await axios.post(`${API}/token`, new URLSearchParams({
+        username,
+        password,
+      }));
+      const { access_token } = response.data;
+      localStorage.setItem("token", access_token);
+      setToken(access_token);
+      setShowLogin(false);
+    } catch (error) {
+      console.error("Error logging in:", error);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    setToken(null);
+  };
+
+  const handleAddToCart = (product) => {
+    setCart([...cart, product]);
+  };
+
+  const handleRemoveFromCart = (product) => {
+    setCart(cart.filter((p) => p.id !== product.id));
   };
 
   const fetchProducts = async (category = "") => {
@@ -239,74 +355,104 @@ function App() {
   const displayProducts = searchResults || products;
 
   return (
-    <div className="App">
-      <header className="app-header">
-        <div className="container">
-          <h1 className="app-title">AI Shopping Mall</h1>
-          <p className="app-subtitle">Find products with AI-powered search</p>
-        </div>
-      </header>
-
-      <main className="main-content">
-        <div className="container">
-          <SearchBar 
-            onSearch={handleSearch}
-            onImageSearch={handleImageSearch}
-          />
-
-          <div className="content-layout">
-            <aside className="sidebar">
-              <CategoryFilter
-                categories={categories}
-                selectedCategory={selectedCategory}
-                onCategoryChange={handleCategoryChange}
-              />
-            </aside>
-
-            <section className="products-section">
-              {loading ? (
-                <div className="loading">
-                  <div className="loading-spinner"></div>
-                  <p>Loading products...</p>
-                </div>
-              ) : (
+    <Router>
+      <div className="App">
+        <header className="app-header">
+          <div className="container">
+            <h1 className="app-title">AI Shopping Mall</h1>
+            <p className="app-subtitle">Find products with AI-powered search</p>
+            <div className="auth-buttons">
+              {token ? (
                 <>
-                  <div className="products-header">
-                    <h2>
-                      {searchResults ? "Search Results" : selectedCategory ? `${selectedCategory.charAt(0).toUpperCase() + selectedCategory.slice(1)} Products` : "All Products"}
-                      <span className="products-count">({displayProducts.length})</span>
-                    </h2>
-                    {searchResults && (
-                      <button 
-                        className="clear-search-btn"
-                        onClick={() => {
-                          setSearchResults(null);
-                          fetchProducts(selectedCategory);
-                        }}
-                      >
-                        Clear Search
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="products-grid">
-                    {displayProducts.map((product) => (
-                      <ProductCard key={product.id} product={product} />
-                    ))}
-                  </div>
-
-                  {displayProducts.length === 0 && (
-                    <div className="no-products">
-                      <p>No products found. Try a different search or category.</p>
-                    </div>
-                  )}
+                  <Link to="/profile" className="auth-btn">Profile</Link>
+                  <Link to="/cart" className="auth-btn">Cart ({cart.length})</Link>
+                  <Link to="/chat" className="auth-btn">Chat</Link>
+                  <button onClick={handleLogout} className="auth-btn">Logout</button>
                 </>
+              ) : (
+                <button onClick={() => setShowLogin(true)} className="auth-btn">Login</button>
               )}
-            </section>
+            </div>
           </div>
-        </div>
-      </main>
-    </div>
+        </header>
+
+        {showLogin && <LoginForm onLogin={handleLogin} onClose={() => setShowLogin(false)} />}
+
+        <main className="main-content">
+          {token && <CreateProductForm onCreate={handleCreateProduct} />}
+          <div className="container">
+            <Switch>
+              <Route path="/profile">
+                <Profile user={{ username: 'user' }} />
+              </Route>
+              <Route path="/cart">
+                <Cart cart={cart} onRemoveFromCart={handleRemoveFromCart} />
+              </Route>
+              <Route path="/chat">
+                <Chat user={{ username: 'user' }} />
+              </Route>
+              <Route path="/">
+                <SearchBar
+                  onSearch={handleSearch}
+                  onImageSearch={handleImageSearch}
+                />
+
+                <div className="content-layout">
+                  <aside className="sidebar">
+                    <CategoryFilter
+                      categories={categories}
+                      selectedCategory={selectedCategory}
+                      onCategoryChange={handleCategoryChange}
+                    />
+                  </aside>
+
+                  <section className="products-section">
+                    {loading ? (
+                      <div className="loading">
+                        <div className="loading-spinner"></div>
+                        <p>Loading products...</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="products-header">
+                          <h2>
+                            {searchResults ? "Search Results" : selectedCategory ? `${selectedCategory.charAt(0).toUpperCase() + selectedCategory.slice(1)} Products` : "All Products"}
+                            <span className="products-count">({displayProducts.length})</span>
+                          </h2>
+                          {searchResults && (
+                            <button
+                              className="clear-search-btn"
+                              onClick={() => {
+                                setSearchResults(null);
+                                fetchProducts(selectedCategory);
+                              }}
+                            >
+                              Clear Search
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="products-grid">
+                          {displayProducts.map((product) => (
+                            <ProductCard key={product.id} product={product} onAddToCart={handleAddToCart} />
+                          ))}
+                        </div>
+
+                        {displayProducts.length === 0 && (
+                          <div className="no-products">
+                            <p>No products found. Try a different search or category.</p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </section>
+                </div>
+              </Route>
+            </Switch>
+          </div>
+        </main>
+      </div>
+    </Router>
   );
 }
 
