@@ -31,6 +31,16 @@ class User(BaseModel):
     username: str
     hashed_password: str
 
+class Cart(BaseModel):
+    username: str
+    products: List[str] = []
+
+class Message(BaseModel):
+    sender: str
+    receiver: str
+    text: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -367,6 +377,48 @@ async def get_categories():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# Cart endpoints
+@api_router.get("/cart", response_model=Cart)
+async def get_cart(current_user: User = Depends(get_current_user)):
+    cart = await db.carts.find_one({"username": current_user.username})
+    if not cart:
+        return Cart(username=current_user.username)
+    return Cart(**cart)
+
+@api_router.post("/cart", response_model=Cart)
+async def add_to_cart(product_id: str, current_user: User = Depends(get_current_user)):
+    await db.carts.update_one(
+        {"username": current_user.username},
+        {"$push": {"products": product_id}},
+        upsert=True
+    )
+    cart = await db.carts.find_one({"username": current_user.username})
+    return Cart(**cart)
+
+@api_router.delete("/cart/{product_id}", response_model=Cart)
+async def remove_from_cart(product_id: str, current_user: User = Depends(get_current_user)):
+    await db.carts.update_one(
+        {"username": current_user.username},
+        {"$pull": {"products": product_id}}
+    )
+    cart = await db.carts.find_one({"username": current_user.username})
+    return Cart(**cart)
+
+# Chat endpoints
+@api_router.get("/chat", response_model=List[Message])
+async def get_messages(current_user: User = Depends(get_current_user)):
+    messages = await db.messages.find(
+        {"$or": [{"sender": current_user.username}, {"receiver": current_user.username}]}
+    ).to_list(100)
+    return [Message(**message) for message in messages]
+
+@api_router.post("/chat", response_model=Message)
+async def send_message(message: Message, current_user: User = Depends(get_current_user)):
+    if message.sender != current_user.username:
+        raise HTTPException(status_code=403, detail="You can only send messages as yourself")
+    await db.messages.insert_one(message.dict())
+    return message
 
 # Health check
 @api_router.get("/")

@@ -149,7 +149,9 @@ class BackendTester:
     def test_text_search(self):
         """Test text-based product search"""
         search_queries = [
+            {"query": "shoes", "expected_min": 2, "description": "shoes search"},
             {"query": "dress", "expected_min": 1, "description": "dress search"},
+            {"query": "cosmetics", "expected_min": 1, "description": "cosmetics search"},
             {"query": "leather", "expected_min": 1, "description": "leather search"},
             {"query": "premium", "expected_min": 2, "description": "premium search"}
         ]
